@@ -1763,7 +1763,7 @@ window.__ModuleLoader__.load({
 				const cid = c.id;
 				const busy = !!searchBusy[cid];
 				const hasRes = !!searchRes[cid];
-				return React.createElement("div", { className: "dbt-row", style: { margin: "4px 12px 4px 28px", gap: 6, alignItems: "center" } },
+				return React.createElement("div", { key: "f:" + cid, className: "dbt-row", style: { margin: "4px 12px 4px 28px", gap: 6, alignItems: "center" } },
 					React.createElement("select", {
 						value: dbFilter[cid] || "",
 						onChange: (e) => setDbFilter((m) => Object.assign({}, m, { [cid]: e.target.value })),
@@ -1886,17 +1886,18 @@ window.__ModuleLoader__.load({
 				if (!list) continue;
 				// 内嵌筛选行：库下拉 + 表名模糊搜索（仅 mysql 原生；其余走服务端逐库回退）
 				treeRows.push(filterRow(c));
+				// 搜索错误行优先于结果视图渲染（与 hits 解耦：首次失败也要有反馈，点击重试）
+				if (searchErr[c.id]) { treeRows.push(treerow(ck + ":sx", 1, false, true, t("loadFailed") + "：" + searchErr[c.id], () => doSearch(c), false)); continue; }
 				// 搜索结果视图：替代目录树，点结果行打开对应表；「×」返回目录树
 				const hits = searchRes[c.id];
 				if (hits) {
-					if (searchErr[c.id]) { treeRows.push(treerow(ck + ":sx", 1, false, true, t("loadFailed") + "：" + searchErr[c.id], () => doSearch(c), false)); }
-					else if (hits.length === 0) { treeRows.push(treerow(ck + ":s0", 1, false, true, t("searchEmpty"))); }
+					if (hits.length === 0) { treeRows.push(treerow(ck + ":s0", 1, false, true, t("searchEmpty"))); }
 					else {
 						for (const h of hits) {
-							const active = !!sel && sel.connId === c.id && sel.db === h.database && !!sel.table && sel.table.name === h.name;
-							treeRows.push(treerow("sr:" + c.id + "/" + h.database + "/" + h.name, 1, false, true,
+							const active = !!sel && sel.connId === c.id && sel.db === h.database && (!h.schema || sel.schemaName === h.schema) && !!sel.table && sel.table.name === h.name;
+							treeRows.push(treerow("sr:" + c.id + "/" + h.database + "/" + (h.schema ? h.schema + "." : "") + h.name, 1, false, true,
 								h.database + "." + h.name + (h.comment ? " · " + h.comment : ""),
-								(e) => onSelect({ connId: c.id, db: h.database, table: { name: h.name, type: h.type } }, e.currentTarget), active));
+								(e) => onSelect({ connId: c.id, db: h.database, schemaName: h.schema, table: { name: h.name, type: h.type } }, e.currentTarget), active));
 						}
 					}
 					continue;

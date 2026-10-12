@@ -7,11 +7,17 @@
 ### 新增
 
 - **跨库表名模糊搜索**：每个连接展开后内嵌筛选行——库下拉（全部库/单库）+ 关键词输入框（回车或点「搜索」执行）。命中结果以平铺列表替代目录树展示（`库名.表名 · 注释`），点击直接打开该表的结构+数据预览，「×」返回目录树。
-- **适配器原生搜索优先**：`DatabaseAdapter` 新增可选 `searchTables(keyword, database?, limit?)`（返回 `TableSearchHit[]`：`{database, schema?, name, type?, comment?}`）。mysql 实现一条 `information_schema.TABLES` LIKE 查询跨库完成（转义符用 `|`，避开反斜杠在 SQL 字面量与 `NO_BACKSLASH_ESCAPES` 模式下的歧义；`% _ | \` 全转义，参数绑定无注入面；默认排除四系统库，给定库时精确限定）。
-- **无原生实现的回退路径**：给定库时 `listTables` + 内存过滤；未给定时逐库并发（批 8）拉取过滤，单库失败不拖垮整体。过滤大小写不敏感，表名与注释均参与匹配。
+- **适配器原生搜索优先**：`DatabaseAdapter` 新增可选 `searchTables(keyword, database?, limit?)`（返回 `TableSearchHit[]`：`{database, schema?, name, type?, comment?}`）。
+  - mysql：一条 `information_schema.TABLES` LIKE 查询跨库完成（转义符用 `|`，避开反斜杠在 SQL 字面量与 `NO_BACKSLASH_ESCAPES` 模式下的歧义；`% _ | \` 全转义，参数绑定无注入面；默认排除四系统库，给定库时精确限定）。
+  - postgresql / gaussdb：按库池化逐库查 `information_schema.tables`（`ILIKE` 大小写不敏感，转义符 `~`；`database` 参数兼容三种形态——库名（UI 下拉传值，该库全部用户 schema）/ `库名.schema`（精确单 schema）/ schema（当前库）），命中带 `schema` 字段，前端点击按库+schema 精确打开；排除 `information_schema` 与 `pg_*` 系。
+- **无原生实现的回退路径（按 kind 白名单）**：仅 `mysql/mongodb/sqlite`（`listTables(database)` 语义为库名）参与回退——给定库 `listTables` + 内存过滤；未给定逐库并发（批 8）拉取过滤，单库失败不拖垮整体。redis（listTables 忽略库名，逐库循环会重复返回同一批键）与 oracle/dmdb（database 语义为 owner，跨库回退会错标来源）不参与，直接返回空。过滤大小写不敏感，表名与注释均参与匹配。
 - **上限与审计**：limit 钳 1..200（默认 100）；服务端审计落 `search_tables`（statement 记关键词与库，rowsAffected 记命中数）。
 - HTTP 路由 `GET /api/search-tables`（project/connId/keyword 必填，database/limit 可选）。
-- 测试：manager 原生/回退两路径 + cap 钳制 + 审计断言；HTTP 路由契约（回退过滤/限定库/参数校验/未授权）；mysql 真机（跨库命中、限定库、LIKE 转义——字面 `%` 不作通配符）。
+- 测试：manager 原生/回退两路径 + cap 钳制 + 审计断言 + 非白名单 kind 不回退；HTTP 路由契约（回退过滤/限定库/参数校验/未授权）；mysql 真机（跨库命中、限定库、LIKE 转义——字面 `%` 不作通配符）；pg-like mock 驱动（库名限定/`db.schema` 精确/跨库逐池/ILIKE 转义）。
+
+### 修复
+
+- 前端搜索失败反馈：错误行渲染与结果视图解耦（首次搜索失败也显示错误行并可点击重试，不再静默回到目录树）；筛选行补 React key（避免列表 key 警告与输入框重挂载丢焦点）。
 
 ## 1.7.4
 

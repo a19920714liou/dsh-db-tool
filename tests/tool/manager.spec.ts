@@ -266,4 +266,14 @@ describe('DbToolService: searchTables 跨库表搜索', () => {
       await fx.dispose();
     }
   });
+
+  it('非白名单 kind（redis 语义不兼容）不走回退 → 返回空而非错标来源', async () => {
+    const fx = await makeFixture('rw', { kind: 'redis' });
+    try {
+      // 若误走回退，fake adapter 的 app/test 两库会各返回 users 两条；断言空即白名单生效
+      expect(await fx.service.searchTables(fx.projectA, CONN_ID, 'users')).toEqual([]);
+    } finally {
+      await fx.dispose();
+    }
+  });
 });

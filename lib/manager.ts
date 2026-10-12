@@ -119,6 +119,10 @@ function assertNonEmpty(v: string | undefined, label: string): string {
   return s;
 }
 
+/** searchTables 回退白名单：listTables(database) 语义为「库名」的 kind（pg/gaussdb 有原生实现；
+ *  redis/oracle/dmdb 语义不兼容，回退会错标来源或重复返回，见 manager.searchTables 注释） */
+const SEARCH_FALLBACK_KINDS = new Set<string>(['mysql', 'mongodb', 'sqlite']);
+
 /** 单连接并发控制台事务会话上限（每会话独占驱动池 + checkout 连接，防连接耗尽） */
 const MAX_CONSOLE_SESSIONS_PER_CONN = 4;
 
@@ -396,24 +400,31 @@ export class DbToolService {
       let hits: TableSearchHit[];
       if (adapter.searchTables) {
         hits = await adapter.searchTables(kw, database, cap);
-      } else if (database) {
-        const list = await adapter.listTables(database);
-        hits = filterTables(list, kw, database);
-      } else {
-        const dbs = await adapter.listDatabases();
-        hits = [];
-        for (let i = 0; i < dbs.length && hits.length < cap; i += 8) {
-          const batch = await Promise.all(
-            dbs.slice(i, i + 8).map(async (db) => {
-              try {
-                return filterTables(await adapter.listTables(db), kw, db);
-              } catch {
-                return []; // 个别库不可读（权限/系统库）不拖垮整体搜索
-              }
-            }),
-          );
-          hits = hits.concat(...batch);
+      } else if (SEARCH_FALLBACK_KINDS.has(adapter.kind)) {
+        // 回退仅对「listTables(database) 语义 = 库名」的 kind 安全：
+        // pg/gaussdb 走原生 searchTables；redis listTables 忽略库名（逐库循环会重复返回同一批键）、
+        // oracle/dmdb database 语义为 owner，跨库回退会错标来源——这些 kind 不支持回退，返回空。
+        if (database) {
+          const list = await adapter.listTables(database);
+          hits = filterTables(list, kw, database);
+        } else {
+          const dbs = await adapter.listDatabases();
+          hits = [];
+          for (let i = 0; i < dbs.length && hits.length < cap; i += 8) {
+            const batch = await Promise.all(
+              dbs.slice(i, i + 8).map(async (db) => {
+                try {
+                  return filterTables(await adapter.listTables(db), kw, db);
+                } catch {
+                  return []; // 个别库不可读（权限/系统库）不拖垮整体搜索
+                }
+              }),
+            );
+            hits = hits.concat(...batch);
+          }
         }
+      } else {
+        hits = [];
       }
       this.audit(key, connId, 'search_tables', auditStmt, 'none', false, true, undefined, hits.length);
       return hits.slice(0, cap);
