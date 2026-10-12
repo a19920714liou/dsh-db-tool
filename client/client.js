@@ -573,6 +573,13 @@ window.__ModuleLoader__.load({
 				"/* ===== 填充式无边框输入 ===== */",
 				".dbt-row input,.dbt-row select,.dbt-card input,.dbt-card select,.dbt-card textarea,.dbt-group input,.dbt-group select{flex:1;min-width:60px;background:var(--dbt-surface-strong);border:none;color:inherit;border-radius:var(--dbt-radius-ctrl);padding:5px 12px;font-size:13px;font-family:inherit;transition:outline-color .18s var(--dbt-ease),outline-width .18s var(--dbt-ease);}",
 				".dbt-row input:focus,.dbt-row select:focus,.dbt-card input:focus,.dbt-card select:focus,.dbt-card textarea:focus,.dbt-group input:focus,.dbt-group select:focus{outline:2px solid var(--dbt-accent);outline-offset:-1px;}",
+				/* select 弹出层配色自洽：option 弹层是原生控件，不继承 .dbt 面板背景——Windows Chromium
+				 * 未声明 color-scheme 时固定白底，而 option 文字 color:inherit 在第三方主题（深色面板）下
+				 * 是白字 → 白底白字。option 显式配一套自带对比度的深/浅对（不透明，弹层是独立原生窗口，
+				 * 半透明会混入白底），并声明 color-scheme 让原生层按系统深浅渲染（选中项高亮/滚动条） */
+				".dbt-row select,.dbt-card select,.dbt-group select{color-scheme:dark light;}",
+				".dbt-row select option,.dbt-card select option,.dbt-group select option{color:var(--dbt-text);background:#28282c;}",
+				"@media (prefers-color-scheme: light){.dbt-row select option,.dbt-card select option,.dbt-group select option{background:#fcfcfc;}}",
 				".dbt-card textarea{font-family:var(--dbt-mono);min-height:96px;resize:vertical;}",
 				"/* ===== 按钮 ===== */",
 				".dbt-btn{border:none;background:var(--dbt-surface);color:inherit;border-radius:var(--dbt-radius-ctrl);padding:5px 12px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;transition:background .18s var(--dbt-ease),filter .18s var(--dbt-ease),transform .18s var(--dbt-ease),opacity .18s var(--dbt-ease);}",
