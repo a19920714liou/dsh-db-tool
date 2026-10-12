@@ -64,6 +64,22 @@ suite('mysql 适配器（真机，DBT_TEST_MYSQL_URL 门控）', () => {
     expect(cols.find((c) => c.name === 'score')?.dataType).toBe('decimal(10,2)');
   });
 
+  it('searchTables：跨库模糊命中、限定库、LIKE 转义（% 不作通配符）', async () => {
+    const search = adapter.searchTables!.bind(adapter);
+    // 不带库：排除系统库，命中建表用例创建的 dbt_test_users
+    const hits = await search('dbt_test');
+    expect(hits.some((h) => h.name === 'dbt_test_users')).toBe(true);
+    const SYSTEM = ['information_schema', 'mysql', 'performance_schema', 'sys'];
+    expect(hits.every((h) => !SYSTEM.includes(h.database))).toBe(true);
+    // 限定库：命中全部落在该库
+    const dbName = decodeURIComponent(new URL(url as string).pathname.replace(/^\/+/, ''));
+    const scoped = await search('dbt_test', dbName);
+    expect(scoped.length).toBeGreaterThan(0);
+    expect(scoped.every((h) => h.database === dbName)).toBe(true);
+    // 字面 %：ESCAPE 失效时 '%' 会 LIKE 匹配全部表名 → 空结果即转义生效
+    await expect(search('%')).resolves.toEqual([]);
+  });
+
   it('previewRows clamp 50 + 注入串安全引用', async () => {
     const r = await adapter.previewRows('dbt_test_users', 100);
     expect(r.rowCount).toBeLessThanOrEqual(50);

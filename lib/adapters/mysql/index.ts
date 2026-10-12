@@ -21,6 +21,7 @@ import type {
   QueryResult,
   ResolvedConnection,
   TableInfo,
+  TableSearchHit,
 } from '../types.js';
 import { assertIdent, clampLimit, clampOffset, humanize, normalizeCell, quoteIdent } from '../sql-shared/common.js';
 import type { TxHandle } from '../sql-shared/pg-like.js';
@@ -222,6 +223,33 @@ export async function createMysqlAdapter(
             type: rawType === 'BASE TABLE' ? 'TABLE' : rawType,
             comment: comment != null && comment !== '' ? String(comment) : undefined,
             database: db,
+          };
+        });
+      }),
+
+    searchTables: (keyword, database, limit) =>
+      humanize('mysql 搜索表', async () => {
+        // 以 | 为 LIKE 转义符（避开反斜杠在 SQL 字面量/NO_BACKSLASH_ESCAPES 模式下的歧义）：
+        // % _ | \ 四字符全部转义后子串匹配，命中值经参数绑定传输、无注入面
+        const esc = keyword.replace(/[\\%_|]/g, (m) => `|${m}`);
+        const cap = Math.max(1, Math.min(200, Math.floor(Number(limit) || 100)));
+        const [rows] = await pool.query<RowDataPacket[]>(
+          `SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TABLE_COMMENT
+           FROM information_schema.TABLES
+           WHERE TABLE_NAME LIKE CONCAT('%', ?, '%') ESCAPE '|'
+             ${database ? 'AND TABLE_SCHEMA = ?' : "AND TABLE_SCHEMA NOT IN ('information_schema','mysql','performance_schema','sys')"}
+           ORDER BY TABLE_SCHEMA, TABLE_NAME
+           LIMIT ${cap}`,
+          database ? [esc, database] : [esc],
+        );
+        return rows.map((r): TableSearchHit => {
+          const rawType = String(r.TABLE_TYPE);
+          const comment = r.TABLE_COMMENT;
+          return {
+            database: String(r.TABLE_SCHEMA),
+            name: String(r.TABLE_NAME),
+            type: rawType === 'BASE TABLE' ? 'TABLE' : rawType,
+            comment: comment != null && comment !== '' ? String(comment) : undefined,
           };
         });
       }),

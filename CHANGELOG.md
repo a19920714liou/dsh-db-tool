@@ -1,5 +1,18 @@
 # Changelog — dsh-db-tool
 
+## 1.7.5
+
+新增数据浏览「库筛选 + 跨库表名模糊搜索」：库多、表多时不必逐层展开找表。
+
+### 新增
+
+- **跨库表名模糊搜索**：每个连接展开后内嵌筛选行——库下拉（全部库/单库）+ 关键词输入框（回车或点「搜索」执行）。命中结果以平铺列表替代目录树展示（`库名.表名 · 注释`），点击直接打开该表的结构+数据预览，「×」返回目录树。
+- **适配器原生搜索优先**：`DatabaseAdapter` 新增可选 `searchTables(keyword, database?, limit?)`（返回 `TableSearchHit[]`：`{database, schema?, name, type?, comment?}`）。mysql 实现一条 `information_schema.TABLES` LIKE 查询跨库完成（转义符用 `|`，避开反斜杠在 SQL 字面量与 `NO_BACKSLASH_ESCAPES` 模式下的歧义；`% _ | \` 全转义，参数绑定无注入面；默认排除四系统库，给定库时精确限定）。
+- **无原生实现的回退路径**：给定库时 `listTables` + 内存过滤；未给定时逐库并发（批 8）拉取过滤，单库失败不拖垮整体。过滤大小写不敏感，表名与注释均参与匹配。
+- **上限与审计**：limit 钳 1..200（默认 100）；服务端审计落 `search_tables`（statement 记关键词与库，rowsAffected 记命中数）。
+- HTTP 路由 `GET /api/search-tables`（project/connId/keyword 必填，database/limit 可选）。
+- 测试：manager 原生/回退两路径 + cap 钳制 + 审计断言；HTTP 路由契约（回退过滤/限定库/参数校验/未授权）；mysql 真机（跨库命中、限定库、LIKE 转义——字面 `%` 不作通配符）。
+
 ## 1.7.4
 
 修复 ro（只读）授权下一切数据库操作永久挂起——「设置数据源后表显示不出来」的直接根因（与 1.7.3 的授权键归一化为两个独立缺陷）。

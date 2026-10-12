@@ -69,7 +69,6 @@ DSH Desktop 0.2.0-rc.2+ bundles the `dsh` command — no separate Node or pnpm r
    dsh plugin --profile desktop add "dsh-db-tool@github:a19920714liou/dsh-db-tool"
    ```
 
-   If you prefer an npm mirror, replace `--registry` with your mirror URL.
 3. **Restart** the desktop app.
 
 The MongoDB driver is bundled into the published package (`vendor/mongodb-driver.cjs`), so the dependency tree contains no mongodb/punycode — the desktop host is packed inside `app.asar` and cannot be host-patched, yet this plugin installs and loads there without any patch.

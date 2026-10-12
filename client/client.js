@@ -161,6 +161,13 @@ window.__ModuleLoader__.load({
 			modeRw: "读写",
 			// 浏览
 			noDatabases: "无可用数据库",
+			dbFilterAll: "全部库",
+			dbFilterLabel: "按库筛选",
+			searchPlaceholder: "模糊搜索表名，回车执行",
+			searchGo: "搜索",
+			searchBack: "返回目录树",
+			searchResults: "搜索结果",
+			searchEmpty: "没有匹配的表",
 			noSchemas: "无模式",
 			noTables: "无表",
 			defaultDb: "默认库",
@@ -377,6 +384,13 @@ window.__ModuleLoader__.load({
 			modeRo: "read-only ro",
 			modeRw: "read-write rw",
 			noDatabases: "No databases available",
+			dbFilterAll: "All databases",
+			dbFilterLabel: "Filter by database",
+			searchPlaceholder: "Fuzzy-search table names, Enter to run",
+			searchGo: "Search",
+			searchBack: "Back to tree",
+			searchResults: "Search results",
+			searchEmpty: "No matching tables",
 			noSchemas: "No schemas",
 			noTables: "No tables",
 			defaultDb: "Default DB",
@@ -1655,10 +1669,17 @@ window.__ModuleLoader__.load({
 			const [dbs, setDbs] = React.useState({}); // connId -> string[]
 			const [schemasMap, setSchemasMap] = React.useState({}); // "<connId>/<db>" -> string[]（PG/GaussDB 库内 schema 层）
 			const [tablesMap, setTablesMap] = React.useState({}); // "<connId>/<db|schema>" -> TableInfo[]
+			// 库筛选 + 跨库表名模糊搜索（连接展开后的内嵌筛选行；搜索走 /api/search-tables）
+			const [dbFilter, setDbFilter] = React.useState({}); // connId -> 选中的库名（"" = 全部库）
+			const [searchKw, setSearchKw] = React.useState({}); // connId -> 输入框关键词
+			const [searchRes, setSearchRes] = React.useState({}); // connId -> TableSearchHit[] | null（非空 = 结果视图替代目录树）
+			const [searchBusy, setSearchBusy] = React.useState({});
+			const [searchErr, setSearchErr] = React.useState({});
 
 			// 会话项目切换时清空树缓存，避免陈旧授权下的旧数据
 			React.useEffect(() => {
 				setOpen({}); setLoading({}); setError({}); setDbs({}); setSchemasMap({}); setTablesMap({});
+				setDbFilter({}); setSearchKw({}); setSearchRes({}); setSearchBusy({}); setSearchErr({});
 			}, [projectPath]);
 
 			// 三层加载统一入口（toggle 展开与手动/自动刷新共用；key: c:<id> | d:<id>/<db> | s:<id>/<db>/<schema>）
@@ -1720,6 +1741,48 @@ window.__ModuleLoader__.load({
 				setError((s) => Object.assign({}, s, { [key]: undefined }));
 				setOpen((o) => Object.assign({}, o, { [key]: false }));
 				Promise.resolve().then(() => fn());
+			}
+
+			/* -- 库筛选 + 跨库表名搜索 -- */
+			function doSearch(c) {
+				const kw = (searchKw[c.id] || "").trim();
+				if (!kw || searchBusy[c.id]) return;
+				setSearchBusy((s) => Object.assign({}, s, { [c.id]: true }));
+				setSearchErr((s) => Object.assign({}, s, { [c.id]: undefined }));
+				api("search-tables" + qs({ project: projectPath, connId: c.id, keyword: kw, database: dbFilter[c.id] || undefined, limit: 100 }))
+					.then((hits) => setSearchRes((s) => Object.assign({}, s, { [c.id]: hits || [] })))
+					.catch((e) => setSearchErr((s) => Object.assign({}, s, { [c.id]: e && e.message ? e.message : String(e) })))
+					.finally(() => setSearchBusy((s) => Object.assign({}, s, { [c.id]: false })));
+			}
+			function clearSearch(c) {
+				setSearchRes((s) => Object.assign({}, s, { [c.id]: null }));
+				setSearchErr((s) => Object.assign({}, s, { [c.id]: undefined }));
+			}
+			// 连接展开后的内嵌筛选行（库下拉 + 表名搜索框）：普通 div 不参与 treeitem 键盘导航
+			function filterRow(c) {
+				const cid = c.id;
+				const busy = !!searchBusy[cid];
+				const hasRes = !!searchRes[cid];
+				return React.createElement("div", { className: "dbt-row", style: { margin: "4px 12px 4px 28px", gap: 6, alignItems: "center" } },
+					React.createElement("select", {
+						value: dbFilter[cid] || "",
+						onChange: (e) => setDbFilter((m) => Object.assign({}, m, { [cid]: e.target.value })),
+						style: { maxWidth: 160, flex: "none" },
+						"aria-label": t("dbFilterLabel"),
+					},
+						React.createElement("option", { value: "" }, t("dbFilterAll")),
+						(dbs[cid] || []).map((dn) => React.createElement("option", { key: dn, value: dn }, dn))),
+					React.createElement("input", {
+						value: searchKw[cid] || "",
+						placeholder: t("searchPlaceholder"),
+						onChange: (e) => setSearchKw((m) => Object.assign({}, m, { [cid]: e.target.value })),
+						onKeyDown: (e) => { if (e.key === "Enter") doSearch(c); },
+						style: { flex: "1 1 auto", minWidth: 80 },
+						"aria-label": t("searchPlaceholder"),
+					}),
+					React.createElement("button", { className: "dbt-btn", disabled: busy, onClick: () => doSearch(c), style: { flex: "none" } }, busy ? "…" : t("searchGo")),
+					hasRes ? React.createElement("button", { className: "dbt-btn", onClick: () => clearSearch(c), "aria-label": t("searchBack"), title: t("searchBack"), style: { flex: "none" } }, "×") : null,
+				);
 			}
 			function toggleConn(c) {
 				if (!projectPath) return;
@@ -1821,8 +1884,26 @@ window.__ModuleLoader__.load({
 				if (loading[ck]) { treeRows.push(treerow(ck + ":l", 1, false, true, "…")); continue; }
 				if (error[ck]) { treeRows.push(treerow(ck + ":x", 1, false, true, t("loadFailed") + "：" + error[ck], () => retry(ck, () => toggleConn(c)), false)); continue; }
 				if (!list) continue;
+				// 内嵌筛选行：库下拉 + 表名模糊搜索（仅 mysql 原生；其余走服务端逐库回退）
+				treeRows.push(filterRow(c));
+				// 搜索结果视图：替代目录树，点结果行打开对应表；「×」返回目录树
+				const hits = searchRes[c.id];
+				if (hits) {
+					if (searchErr[c.id]) { treeRows.push(treerow(ck + ":sx", 1, false, true, t("loadFailed") + "：" + searchErr[c.id], () => doSearch(c), false)); }
+					else if (hits.length === 0) { treeRows.push(treerow(ck + ":s0", 1, false, true, t("searchEmpty"))); }
+					else {
+						for (const h of hits) {
+							const active = !!sel && sel.connId === c.id && sel.db === h.database && !!sel.table && sel.table.name === h.name;
+							treeRows.push(treerow("sr:" + c.id + "/" + h.database + "/" + h.name, 1, false, true,
+								h.database + "." + h.name + (h.comment ? " · " + h.comment : ""),
+								(e) => onSelect({ connId: c.id, db: h.database, table: { name: h.name, type: h.type } }, e.currentTarget), active));
+						}
+					}
+					continue;
+				}
 				if (list.length === 0) { treeRows.push(treerow(ck + ":e", 1, false, true, t("noDatabases"))); continue; }
 				for (const d of list) {
+					if (dbFilter[c.id] && d !== dbFilter[c.id]) continue; // 库筛选：前端过滤，未选中库不渲染
 					const useSchemas = !!HAS_SCHEMAS[c.kind];
 					const dk = "d:" + c.id + "/" + d;
 					const dOpen = !!open[dk];

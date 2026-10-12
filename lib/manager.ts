@@ -16,6 +16,7 @@ import type {
   ExecResult,
   QueryResult,
   TableInfo,
+  TableSearchHit,
   TestConnectResult,
   ResolvedConnection,
 } from './adapters/types.js';
@@ -371,6 +372,53 @@ export class DbToolService {
       return result;
     } catch (e) {
       this.audit(key, connId, 'tables', database ?? 'default', 'none', false, false, this.errText(e));
+      throw this.toDriverError(e);
+    }
+  }
+
+  /**
+   * 跨库表名模糊搜索（ro 即可）。优先用适配器原生实现（mysql 走 information_schema
+   * 一条 LIKE）；未实现时回退「逐库 listTables + 内存过滤」（小并发防打满连接池），
+   * 单库语义（sqlite/redis）只搜默认库。limit 钳制 1..200，默认 100。
+   */
+  async searchTables(
+    projectPath: string | undefined,
+    connId: string,
+    keyword: string,
+    database?: string,
+    limit?: number,
+  ): Promise<TableSearchHit[]> {
+    const kw = assertNonEmpty(keyword, 'keyword').trim();
+    const cap = Math.max(1, Math.min(200, Math.floor(Number(limit) || 100)));
+    const { key, adapter } = await this.authorize(projectPath, connId, false);
+    const auditStmt = `search "${kw.length > 100 ? kw.slice(0, 100) + '…' : kw}"${database ? ` @ ${database}` : ''}`;
+    try {
+      let hits: TableSearchHit[];
+      if (adapter.searchTables) {
+        hits = await adapter.searchTables(kw, database, cap);
+      } else if (database) {
+        const list = await adapter.listTables(database);
+        hits = filterTables(list, kw, database);
+      } else {
+        const dbs = await adapter.listDatabases();
+        hits = [];
+        for (let i = 0; i < dbs.length && hits.length < cap; i += 8) {
+          const batch = await Promise.all(
+            dbs.slice(i, i + 8).map(async (db) => {
+              try {
+                return filterTables(await adapter.listTables(db), kw, db);
+              } catch {
+                return []; // 个别库不可读（权限/系统库）不拖垮整体搜索
+              }
+            }),
+          );
+          hits = hits.concat(...batch);
+        }
+      }
+      this.audit(key, connId, 'search_tables', auditStmt, 'none', false, true, undefined, hits.length);
+      return hits.slice(0, cap);
+    } catch (e) {
+      this.audit(key, connId, 'search_tables', auditStmt, 'none', false, false, this.errText(e));
       throw this.toDriverError(e);
     }
   }
@@ -1218,6 +1266,18 @@ export class DbToolService {
     if (e instanceof DbToolError) return e;
     return new DbToolError('DRIVER_ERROR', this.errText(e));
   }
+}
+
+/** 表名/注释子串匹配（大小写不敏感，回退路径用；命中转 TableSearchHit） */
+function filterTables(list: TableInfo[], keyword: string, database: string): TableSearchHit[] {
+  const kw = keyword.toLowerCase();
+  return list
+    .filter(
+      (t) =>
+        t.name.toLowerCase().includes(kw) ||
+        (t.comment !== undefined && t.comment.toLowerCase().includes(kw)),
+    )
+    .map((t) => ({ database, name: t.name, type: t.type, comment: t.comment }));
 }
 
 /** guard 判定（导出供 HTTP 层/script 入口识别） */
